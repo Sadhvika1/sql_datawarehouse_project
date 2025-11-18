@@ -1,1 +1,5 @@
-
+use warehouse
+go
+exec bronze.load_bronze
+go
+exec silver.load_silver
