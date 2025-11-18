@@ -1,1 +1,290 @@
+/* quality check */
+use  warehouse
+
+select cst_id ,count(*) from bronze.crm_cust_info group by cst_id 
+having count(*) >1 or cst_id is null
+
+select * ,ROW_NUMBER() OVER (PARTITION BY CST_ID order by cst_create_date desc ) as flag_last
+from bronze.crm_cust_info
+
+select * from (
+select * ,ROW_NUMBER() OVER (PARTITION BY CST_ID order by cst_create_date desc ) as flag_last
+from bronze.crm_cust_info)t
+where flag_last !=1
+
+select cst_firstname from  bronze.crm_cust_info where cst_firstname! = trim(cst_firstname)
+select cst_lastname from bronze.crm_cust_info where cst_lastname!=trim(cst_lastname)
+select cst_gender from bronze.crm_cust_info where cst_gender!=trim(cst_gender)
+
+select distinct cst_gender from bronze.crm_cust_info
+
+/*====================================================================================*/
+use  warehouse
+
+select cst_id ,count(*) from silver.crm_cust_info group by cst_id 
+having count(*) >1 or cst_id is null
+
+select * ,ROW_NUMBER() OVER (PARTITION BY CST_ID order by cst_create_date desc ) as flag_last
+from silver.crm_cust_info
+
+select * from (
+select * ,ROW_NUMBER() OVER (PARTITION BY CST_ID order by cst_create_date desc ) as flag_last
+from silver.crm_cust_info)t
+where flag_last !=1
+
+select cst_firstname from silver.crm_cust_info where cst_firstname! = trim(cst_firstname)
+select cst_lastname from silver.crm_cust_info where cst_lastname!=trim(cst_lastname)
+select cst_gender from silver.crm_cust_info where cst_gender!=trim(cst_gender)
+
+select distinct cst_gender from silver.crm_cust_info
+
+
+-------------------------
+use warehouse
+/* data quality check for table number 2*/
+select prd_id,count(*) from bronze.crm_prd_info
+group by prd_id
+having count(*)>1 or prd_id is null
+
+select 
+prd_id,
+prd_key,
+replace(substring(prd_key,1,5),'-','_') as cat_id,
+substring(prd_key,7,len(prd_key)) as prd_key,
+prd_nm,
+prd_cost,
+prd_line,
+prd_start_dt,
+prd_end_dt
+from bronze.crm_prd_info
+where replace(substring(prd_key,1,5),'-','_')not in
+(select distinct id from bronze.erp_px_cat_g1v2)
+
+select prd_cost,count(*) from bronze.crm_prd_info
+group by prd_cost
+having prd_cost is null
+
+select prd_end_dt,count(*) from bronze.crm_prd_info
+group by prd_end_dt
+having prd_end_dt is null
+
+select prd_nm
+from bronze.crm_prd_info
+where prd_nm !=trim(prd_nm)
+
+select * from bronze.crm_prd_info
+where prd_end_dt< prd_start_dt
+
+select 
+prd_id,
+prd_key,
+prd_nm,
+prd_start_dt,
+prd_end_dt,
+DATEADD(DAY, -1, LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt)) AS prd_end_dt_test
+from bronze.crm_prd_info
+where prd_key in ('AC-HE-HL-U509-R','AC-HE-HL-U509')
+
+/* quality check after changes*/
+
+select prd_id,count(*) from silver.crm_prd_info
+group by prd_id
+having count(*)>1 or prd_id is null
+
+select 
+prd_id,
+prd_key,
+replace(substring(prd_key,1,5),'-','_') as cat_id,
+substring(prd_key,7,len(prd_key)) as prd_key,
+prd_nm,
+prd_cost,
+prd_line,
+prd_start_dt,
+prd_end_dt
+from bronze.crm_prd_info
+where replace(substring(prd_key,1,5),'-','_')not in
+(select distinct id from silver.erp_px_cat_g1v2)
+
+select prd_cost,count(*) from silver.crm_prd_info
+group by prd_cost
+having prd_cost is null
+
+select prd_end_dt,count(*) from silver.crm_prd_info
+group by prd_end_dt
+having prd_end_dt is null
+
+select prd_nm
+from silver.crm_prd_info
+where prd_nm !=trim(prd_nm)
+
+select * from silver.crm_prd_info
+where prd_end_dt< prd_start_dt
+
+select * from silver.crm_prd_info
+
+-----------
+select
+cid,
+CASE WHEN CID LIKE 'NAS%' THEN substring(cid,4,len(cid))
+     ELSE CID
+END cid,
+bdate,
+gen
+from bronze.erp_cust_AZ12
+
+--identifying out of range dates
+select distinct
+bdate
+from bronze.erp_cust_AZ12
+where bdate <'1924-01-01' or bdate > Getdate()
+
+-- data standardization & consistency 
+select distinct gen,
+case when upper(trim(gen)) in ('F' ,'Female') then 'Female'
+     when  upper(trim(gen)) in ('M' ,'Male') then 'Male'
+      ELSE 'n/a'
+END as gen
+from bronze.erp_cust_AZ12
+---------------
+
+use warehouse
+SELECT
+    NULLIF(sls_order_id, 0) AS sls_order_id
+FROM
+    bronze.crm_sales_details
+WHERE
+    sls_order_id <= 0 or len(sls_order_id)!=8 or sls_order_id > 20500101 or sls_order_id < 19000101
+
+ -- check for invalid dates
+SELECT
+    NULLIF(sls_due_dt, 0) AS sls_due_dt
+FROM
+    bronze.crm_sales_details
+WHERE
+    sls_due_dt<= 0 or len(sls_due_dt)!=8 or sls_due_dt > 20500101 or sls_due_dt < 19000101
+
+ ---sales=quantity * price
+
+select 
+sls_sales,
+sls_quantity,
+sls_price as old_sls_price,
+case  when sls_sales is null or sls_sales <=0 or sls_sales != sls_quantity *abs(sls_price)
+      then sls_quantity *abs(sls_price)
+    else sls_sales
+end as sls_sales,
+
+case  when sls_price is null or sls_price <=0
+      then sls_sales/ nullif(sls_quantity,0)
+    else sls_price
+end as sls_price
+
+from bronze.crm_sales_details
+where sls_sales!=sls_quantity * sls_price or sls_sales is null or sls_quantity is null or sls_price is null
+or sls_sales <=0 or sls_quantity <=0 or sls_price <=0
+
+
+---------------------------
+select prd_id,count(*) from bronze.crm_prd_info
+group by prd_id
+having count(*)>1 or prd_id is null
+
+select 
+prd_id,
+prd_key,
+replace(substring(prd_key,1,5),'-','_') as cat_id,
+substring(prd_key,7,len(prd_key)) as prd_key,
+prd_nm,
+prd_cost,
+prd_line,
+prd_start_dt,
+prd_end_dt
+from bronze.crm_prd_info
+where replace(substring(prd_key,1,5),'-','_')not in
+(select distinct id from bronze.erp_px_cat_g1v2)
+
+select prd_cost,count(*) from bronze.crm_prd_info
+group by prd_cost
+having prd_cost is null
+
+select prd_end_dt,count(*) from bronze.crm_prd_info
+group by prd_end_dt
+having prd_end_dt is null
+
+select prd_nm
+from bronze.crm_prd_info
+where prd_nm !=trim(prd_nm)
+
+select * from bronze.crm_prd_info
+where prd_end_dt< prd_start_dt
+
+select 
+prd_id,
+prd_key,
+prd_nm,
+prd_start_dt,
+prd_end_dt,
+DATEADD(DAY, -1, LEAD(prd_start_dt) OVER (PARTITION BY prd_key ORDER BY prd_start_dt)) AS prd_end_dt_test
+from bronze.crm_prd_info
+where prd_key in ('AC-HE-HL-U509-R','AC-HE-HL-U509')
+
+/* quality check after changes*/
+
+select prd_id,count(*) from silver.crm_prd_info
+group by prd_id
+having count(*)>1 or prd_id is null
+
+select 
+prd_id,
+prd_key,
+replace(substring(prd_key,1,5),'-','_') as cat_id,
+substring(prd_key,7,len(prd_key)) as prd_key,
+prd_nm,
+prd_cost,
+prd_line,
+prd_start_dt,
+prd_end_dt
+from bronze.crm_prd_info
+where replace(substring(prd_key,1,5),'-','_')not in
+(select distinct id from silver.erp_px_cat_g1v2)
+
+select prd_cost,count(*) from silver.crm_prd_info
+group by prd_cost
+having prd_cost is null
+
+select prd_end_dt,count(*) from silver.crm_prd_info
+group by prd_end_dt
+having prd_end_dt is null
+
+select prd_nm
+from silver.crm_prd_info
+where prd_nm !=trim(prd_nm)
+
+select * from silver.crm_prd_info
+where prd_end_dt< prd_start_dt
+
+select * from silver.crm_prd_info
+----------------------------------------------
+select
+cid,
+CASE WHEN CID LIKE 'NAS%' THEN substring(cid,4,len(cid))
+     ELSE CID
+END cid,
+bdate,
+gen
+from bronze.erp_cust_AZ12
+
+--identifying out of range dates
+select distinct
+bdate
+from bronze.erp_cust_AZ12
+where bdate <'1924-01-01' or bdate > Getdate()
+
+-- data standardization & consistency 
+select distinct gen,
+case when upper(trim(gen)) in ('F' ,'Female') then 'Female'
+     when  upper(trim(gen)) in ('M' ,'Male') then 'Male'
+      ELSE 'n/a'
+END as gen
+from bronze.erp_cust_AZ12
 
